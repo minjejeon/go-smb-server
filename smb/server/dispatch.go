@@ -161,8 +161,7 @@ func (c *conn) handleSessionSetup(ctx context.Context, msg []byte, hdr *wire.Hea
 			auth:  c.srv.authFactory(),
 			trees: make(map[uint32]*tree),
 		}
-		c.nextSess++
-		sessID := c.nextSess
+		sessID := c.srv.nextSess.Add(1)
 		c.sessions[sessID] = sess
 		hdr.SessionId = sessID
 	}
@@ -224,7 +223,6 @@ func (c *conn) handleTreeConnect(msg []byte, hdr *wire.Header, sess *session) ui
 	sess.trees[treeID] = &tree{
 		share: sh,
 		opens: make(map[[16]byte]*openHandle),
-		locks: newLockMgrSet(),
 	}
 	hdr.TreeId = treeID
 
@@ -266,6 +264,12 @@ func (c *conn) handleTreeDisconnect(ctx context.Context, hdr *wire.Header, sess 
 func (c *conn) closeAllOpens(ctx context.Context, tr *tree) {
 	for _, oh := range tr.opens {
 		_ = oh.h.Close(ctx)
+		if c.srv.oplocks != nil {
+			c.srv.oplocks.release(oh.path)
+		}
+		if c.srv.locks != nil {
+			c.srv.locks.manager(oh.path).unlockAll(oh.fileId)
+		}
 	}
 	tr.opens = make(map[[16]byte]*openHandle)
 }
@@ -314,16 +318,15 @@ func (c *conn) handleCreate(ctx context.Context, msg []byte, hdr *wire.Header, t
 	}
 
 	var oplock uint8
-	if req.RequestedOplockLevel != 0 {
-		if tr.oplocks == nil {
-			tr.oplocks = newOplockTable()
-		}
-		info := &oplockInfo{fileId: fid, sessID: hdr.SessionId, treeID: hdr.TreeId, path: name}
-		if tr.oplocks.grant(name, info) {
+	if req.RequestedOplockLevel != 0 && c.srv.oplocks != nil {
+		info := &oplockInfo{fileId: fid, sessID: hdr.SessionId, treeID: hdr.TreeId, path: name, conn: c}
+		if c.srv.oplocks.grant(name, info) {
 			oplock = req.RequestedOplockLevel
 		} else {
-			if broken := tr.oplocks.breakOplock(name); broken != nil {
-				c.sendOplockBreak(broken)
+			if broken := c.srv.oplocks.breakOplock(name); broken != nil {
+				if broken.conn != nil {
+					broken.conn.sendOplockBreak(broken)
+				}
 			}
 		}
 	}
@@ -365,8 +368,11 @@ func (c *conn) handleClose(ctx context.Context, msg []byte, tr *tree) uint32 {
 		return c.errBody(osErrToStatus(err))
 	}
 	delete(tr.opens, req.FileId)
-	if tr.oplocks != nil {
-		tr.oplocks.release(oh.path)
+	if c.srv.oplocks != nil {
+		c.srv.oplocks.release(oh.path)
+	}
+	if c.srv.locks != nil {
+		c.srv.locks.manager(oh.path).unlockAll(req.FileId)
 	}
 
 	if oh.deletePending {
@@ -406,6 +412,12 @@ func (c *conn) handleRead(ctx context.Context, msg []byte, tr *tree) uint32 {
 	if !ok {
 		return c.errBody(wire.StatusInvalidHandle)
 	}
+	if c.srv.locks != nil {
+		lm := c.srv.locks.manager(oh.path)
+		if lm.checkConflict(req.FileId, req.Offset, req.Offset+uint64(req.Length), false) {
+			return c.errBody(wire.StatusLockConflict)
+		}
+	}
 	respStart := len(c.out)
 	c.out = wire.ReadResponseAlloc(c.out, int(req.Length))
 	n, err := oh.h.Read(ctx, int64(req.Offset), wire.ReadResponseData(c.out, respStart))
@@ -435,6 +447,12 @@ func (c *conn) handleWrite(ctx context.Context, msg []byte, tr *tree) uint32 {
 	oh, ok := tr.opens[req.FileId]
 	if !ok {
 		return c.errBody(wire.StatusInvalidHandle)
+	}
+	if c.srv.locks != nil {
+		lm := c.srv.locks.manager(oh.path)
+		if lm.checkConflict(req.FileId, req.Offset, req.Offset+uint64(len(req.Data)), true) {
+			return c.errBody(wire.StatusLockConflict)
+		}
 	}
 	n, err := oh.h.Write(ctx, int64(req.Offset), req.Data)
 	if err != nil {

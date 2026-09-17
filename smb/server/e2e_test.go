@@ -62,6 +62,8 @@ func newTestServer(backend vfs.Backend) *Server {
 		maxRead:     1 << 20,
 		maxWrite:    1 << 20,
 		log:         discardLogger(),
+		locks:       newLockMgrSet(),
+		oplocks:     newOplockTable(),
 	}
 }
 

@@ -9,8 +9,10 @@ import (
 )
 
 type lockRange struct {
-	start, end uint64
-	exclusive  bool
+	fileId    [16]byte
+	start     uint64
+	end       uint64
+	exclusive bool
 }
 
 type lockManager struct {
@@ -38,40 +40,70 @@ func (s *lockMgrSet) manager(path string) *lockManager {
 	return m
 }
 
-func (m *lockManager) conflicts(start, end uint64, exclusive bool) (int, bool) {
-	for i, r := range m.ranges {
+func (m *lockManager) conflicts(fid [16]byte, start, end uint64, exclusive bool) bool {
+	for _, r := range m.ranges {
 		overlap := start < r.end && r.start < end
-		if overlap && (r.exclusive || exclusive) {
-			return i, true
+		if overlap {
+			if r.exclusive || exclusive {
+				if r.fileId != fid || r.exclusive != exclusive {
+					return true
+				}
+			}
 		}
 	}
-	return -1, false
+	return false
 }
 
-func (m *lockManager) tryLock(start, length uint64, exclusive, failImmediately bool) bool {
+func (m *lockManager) checkConflict(fid [16]byte, start, end uint64, write bool) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.ranges {
+		overlap := start < r.end && r.start < end
+		if overlap {
+			if r.fileId == fid {
+				continue
+			}
+			if r.exclusive || write {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (m *lockManager) tryLock(fid [16]byte, start, length uint64, exclusive, failImmediately bool) bool {
 	end := start + length
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, conflict := m.conflicts(start, end, exclusive); conflict {
-		if failImmediately {
-			return false
-		}
+	if m.conflicts(fid, start, end, exclusive) {
 		return false
 	}
-	m.ranges = append(m.ranges, lockRange{start: start, end: end, exclusive: exclusive})
+	m.ranges = append(m.ranges, lockRange{fileId: fid, start: start, end: end, exclusive: exclusive})
 	return true
 }
 
-func (m *lockManager) unlock(start, length uint64) {
+func (m *lockManager) unlock(fid [16]byte, start, length uint64) {
 	end := start + length
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i, r := range m.ranges {
-		if r.start == start && r.end == end {
+		if r.fileId == fid && r.start == start && r.end == end {
 			m.ranges = append(m.ranges[:i], m.ranges[i+1:]...)
 			return
 		}
 	}
+}
+
+func (m *lockManager) unlockAll(fid [16]byte) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	filtered := m.ranges[:0]
+	for _, r := range m.ranges {
+		if r.fileId != fid {
+			filtered = append(filtered, r)
+		}
+	}
+	m.ranges = filtered
 }
 
 func (c *conn) handleLock(_ context.Context, msg []byte, tr *tree) uint32 {
@@ -83,19 +115,28 @@ func (c *conn) handleLock(_ context.Context, msg []byte, tr *tree) uint32 {
 	if !ok {
 		return c.errBody(wire.StatusInvalidHandle)
 	}
-	lm := tr.locks.manager(oh.path)
+	lm := c.srv.locks.manager(oh.path)
+	var acquired []wire.LockElement
 	for _, l := range req.Locks {
 		switch {
 		case l.Flags&wire.LockFlagUnlock != 0:
-			lm.unlock(l.Offset, l.Length)
+			lm.unlock(req.FileId, l.Offset, l.Length)
 		case l.Flags&wire.LockFlagExclusiveLock != 0:
-			if !lm.tryLock(l.Offset, l.Length, true, l.Flags&wire.LockFlagFailImmediately != 0) {
+			if !lm.tryLock(req.FileId, l.Offset, l.Length, true, l.Flags&wire.LockFlagFailImmediately != 0) {
+				for _, prev := range acquired {
+					lm.unlock(req.FileId, prev.Offset, prev.Length)
+				}
 				return c.errBody(wire.StatusLockConflict)
 			}
+			acquired = append(acquired, l)
 		case l.Flags&wire.LockFlagSharedLock != 0:
-			if !lm.tryLock(l.Offset, l.Length, false, l.Flags&wire.LockFlagFailImmediately != 0) {
+			if !lm.tryLock(req.FileId, l.Offset, l.Length, false, l.Flags&wire.LockFlagFailImmediately != 0) {
+				for _, prev := range acquired {
+					lm.unlock(req.FileId, prev.Offset, prev.Length)
+				}
 				return c.errBody(wire.StatusLockConflict)
 			}
+			acquired = append(acquired, l)
 		default:
 			return c.errBody(wire.StatusInvalidParameter)
 		}

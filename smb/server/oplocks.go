@@ -1,10 +1,13 @@
 package server
 
 import (
+	"sync"
+
 	"github.com/sonroyaalmerol/go-smb-server/smb/wire"
 )
 
 type oplockTable struct {
+	mu     sync.Mutex
 	byPath map[string]*oplockInfo
 }
 
@@ -13,6 +16,7 @@ type oplockInfo struct {
 	sessID uint64
 	treeID uint32
 	path   string
+	conn   *conn
 }
 
 func newOplockTable() *oplockTable {
@@ -20,6 +24,8 @@ func newOplockTable() *oplockTable {
 }
 
 func (ot *oplockTable) grant(path string, info *oplockInfo) bool {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
 	_, exists := ot.byPath[path]
 	if exists {
 		return false
@@ -29,6 +35,8 @@ func (ot *oplockTable) grant(path string, info *oplockInfo) bool {
 }
 
 func (ot *oplockTable) breakOplock(path string) *oplockInfo {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
 	existing, exists := ot.byPath[path]
 	if !exists {
 		return nil
@@ -38,10 +46,15 @@ func (ot *oplockTable) breakOplock(path string) *oplockInfo {
 }
 
 func (ot *oplockTable) release(path string) {
+	ot.mu.Lock()
+	defer ot.mu.Unlock()
 	delete(ot.byPath, path)
 }
 
 func (c *conn) sendOplockBreak(info *oplockInfo) {
+	if c == nil {
+		return
+	}
 	var msg [88]byte
 	msg[0], msg[1], msg[2], msg[3] = 0xFE, 'S', 'M', 'B'
 	le32Put(msg[4:8], 64)

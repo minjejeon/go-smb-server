@@ -1,8 +1,10 @@
 | Status | Task |
 | --- | --- |
-| Completed | 1. Explore project context |
-| Completed | 2. Ask clarifying questions |
-| Completed | 3. Propose 2-3 approaches |
-| Completed | 4. Present design |
-| Completed | 5. Write design doc |
-| Completed | 6. Transition to implementation |
+| Completed | Task 1: VFS Path Normalization & Root Boundary Enforcement |
+| Completed | Task 2: VFS Rename Directory Escape Prevention & File Move |
+| Completed | Task 3: Read-Only Share Support |
+| Completed | Task 4: Server Panic Recovery & DoS Bounds Validation |
+| Completed | Task 5: Directory Enumeration Pagination |
+| Completed | Task 6: Compound Related Operations Signing Verification |
+| Completed | Task 7: Multi-Session File Lock and Oplock Synchronization |
+| In Progress | Task 8: Full E2E, Big-Endian & AIX Verification |

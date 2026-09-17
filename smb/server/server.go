@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sonroyaalmerol/go-smb-server/smb/auth"
@@ -42,6 +43,9 @@ type Server struct {
 	requireEnc  bool
 	log         *slog.Logger
 	guid        [16]byte
+	locks       *lockMgrSet
+	oplocks     *oplockTable
+	nextSess    atomic.Uint64
 
 	mu       sync.Mutex
 	listener net.Listener
@@ -74,6 +78,8 @@ func New(opts ...Option) (*Server, error) {
 		maxWrite:    defaultMaxWrite,
 		maxCredits:  defaultMaxCredits,
 		log:         slog.Default(),
+		locks:       newLockMgrSet(),
+		oplocks:     newOplockTable(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -172,11 +178,9 @@ type session struct {
 }
 
 type tree struct {
-	share   vfs.Share
-	opens   map[[16]byte]*openHandle
-	nextID  uint64
-	locks   *lockMgrSet
-	oplocks *oplockTable
+	share  vfs.Share
+	opens  map[[16]byte]*openHandle
+	nextID uint64
 }
 
 type openHandle struct {
@@ -197,7 +201,6 @@ type conn struct {
 	log           *slog.Logger
 	out           []byte
 	sessions      map[uint64]*session
-	nextSess      uint64
 	creditBalance uint32
 
 	nextAsync    uint64
