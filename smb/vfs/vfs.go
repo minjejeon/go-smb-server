@@ -230,7 +230,7 @@ func (b *LocalBackend) Open(_ context.Context, opts OpenOptions) (Handle, error)
 	if err != nil {
 		return nil, err
 	}
-	return &localHandle{f: f, path: full, name: filepath.Base(full)}, nil
+	return &localHandle{backend: b, f: f, path: full, name: filepath.Base(full)}, nil
 }
 
 func getFlags(disp uint32, appendFile bool) int {
@@ -250,9 +250,10 @@ func getFlags(disp uint32, appendFile bool) int {
 }
 
 type localHandle struct {
-	f    *os.File
-	path string
-	name string
+	backend *LocalBackend
+	f       *os.File
+	path    string
+	name    string
 }
 
 func (h *localHandle) Read(_ context.Context, offset int64, p []byte) (int, error) {
@@ -305,13 +306,36 @@ func (h *localHandle) SetInfo(_ context.Context, req *SetInfoRequest) error {
 }
 
 func (h *localHandle) Rename(_ context.Context, newPath string, replaceIfExists bool) error {
-	newFull := filepath.Join(filepath.Dir(h.path), filepath.Base(filepath.FromSlash(newPath)))
+	if strings.Contains(newPath, "..") {
+		return os.ErrPermission
+	}
+	clean := cleanPath(newPath)
+	if clean == "" || clean == "." {
+		return os.ErrPermission
+	}
+
+	var newFull string
+	if h.backend != nil {
+		var err error
+		newFull, err = h.backend.fullPath(clean)
+		if err != nil {
+			return err
+		}
+	} else {
+		newFull = filepath.Join(filepath.Dir(h.path), filepath.Base(filepath.FromSlash(clean)))
+	}
+
 	if !replaceIfExists {
 		if _, err := os.Stat(newFull); err == nil {
 			return os.ErrExist
 		}
 	}
-	return os.Rename(h.path, newFull)
+	if err := os.Rename(h.path, newFull); err != nil {
+		return err
+	}
+	h.path = newFull
+	h.name = filepath.Base(newFull)
+	return nil
 }
 
 func (h *localHandle) Enumerate(_ context.Context, pattern string) iter.Seq2[FileInfo, error] {
