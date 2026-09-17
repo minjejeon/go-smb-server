@@ -118,6 +118,12 @@ func (c *conn) handleLock(_ context.Context, msg []byte, tr *tree) uint32 {
 	lm := c.srv.locks.manager(oh.path)
 	var acquired []wire.LockElement
 	for _, l := range req.Locks {
+		if l.Length == 0 || l.Offset+l.Length < l.Offset {
+			for _, prev := range acquired {
+				lm.unlock(req.FileId, prev.Offset, prev.Length)
+			}
+			return c.errBody(wire.StatusInvalidParameter)
+		}
 		switch {
 		case l.Flags&wire.LockFlagUnlock != 0:
 			lm.unlock(req.FileId, l.Offset, l.Length)

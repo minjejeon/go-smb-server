@@ -189,7 +189,7 @@ func (h *memHandle) Enumerate(_ context.Context, pattern string) iter.Seq2[vfs.F
 		defer h.b.mu.Unlock()
 		names := make([]string, 0, len(h.n.children))
 		for name := range h.n.children {
-			if pattern == "" || pattern == "*" || matchGlob(pattern, name) {
+			if pattern == "" || pattern == "*" || pattern == "*.*" || matchGlob(strings.ToLower(pattern), strings.ToLower(name)) {
 				names = append(names, name)
 			}
 		}

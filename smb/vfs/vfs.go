@@ -353,8 +353,8 @@ func (h *localHandle) Enumerate(_ context.Context, pattern string) iter.Seq2[Fil
 			return
 		}
 		for _, e := range entries {
-			if pattern != "" {
-				matched, err := filepath.Match(pattern, e.Name())
+			if pattern != "" && pattern != "*" && pattern != "*.*" {
+				matched, err := filepath.Match(strings.ToLower(pattern), strings.ToLower(e.Name()))
 				if err != nil {
 					yield(FileInfo{}, fmt.Errorf("vfs: bad search pattern %q: %w", pattern, err))
 					return

@@ -486,7 +486,7 @@ func (c *conn) handleQueryDirectory(ctx context.Context, msg []byte, tr *tree) u
 	}
 
 	pattern := wire.UTF16FromBytes(req.FileName)
-	if pattern == "" {
+	if pattern == "" || pattern == "*.*" {
 		pattern = "*"
 	}
 

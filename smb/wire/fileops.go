@@ -173,7 +173,7 @@ func ReadResponseAppend(dst []byte, data []byte) []byte {
 	out = append(out, data...)
 	b := out[start : start+fixed]
 	put16(b[0:2], 17)
-	put16(b[2:4], uint16(start+fixed))
+	put16(b[2:4], uint16(HeaderSize+fixed))
 	put32(b[4:8], uint32(len(data)))
 	put32(b[8:12], 0)
 	put32(b[12:16], 0)
@@ -186,7 +186,7 @@ func ReadResponseAlloc(dst []byte, length int) []byte {
 	out := append(dst, make([]byte, fixed+length)...)
 	b := out[start : start+fixed]
 	put16(b[0:2], 17)
-	put16(b[2:4], uint16(start+fixed))
+	put16(b[2:4], uint16(HeaderSize+fixed))
 	put32(b[4:8], uint32(length))
 	put32(b[8:12], 0)
 	put32(b[12:16], 0)
@@ -331,8 +331,8 @@ func (r *QueryInfoRequest) Parse(msg []byte) error {
 	r.InfoType = b[2]
 	r.FileInfoClass = b[3]
 	r.OutputBufferLength = binary.LittleEndian.Uint32(b[4:8])
-	r.AdditionalInfo = binary.LittleEndian.Uint32(b[24:28])
-	r.Flags = binary.LittleEndian.Uint32(b[28:32])
+	r.AdditionalInfo = binary.LittleEndian.Uint32(b[16:20])
+	r.Flags = binary.LittleEndian.Uint32(b[20:24])
 	copy(r.FileId[:], b[24:40])
 	return nil
 }
@@ -374,8 +374,8 @@ func QueryInfoResponseAppend(dst []byte, info []byte) []byte {
 	out := append(dst, make([]byte, fixed)...)
 	out = append(out, info...)
 	b := out[start : start+fixed]
-	put16(b[0:2], 9)                   // StructureSize
-	put16(b[2:4], uint16(start+fixed)) // OutputBufferOffset (from header)
+	put16(b[0:2], 9)                        // StructureSize
+	put16(b[2:4], uint16(HeaderSize+fixed)) // OutputBufferOffset (from header)
 	put32(b[4:8], uint32(len(info)))
 	return out
 }

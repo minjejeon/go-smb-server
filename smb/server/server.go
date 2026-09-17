@@ -444,10 +444,12 @@ func (c *conn) handleMessage(ctx context.Context, msg []byte) {
 
 func fileIdOffset(cmd uint16) int {
 	switch cmd {
-	case wire.CmdClose, wire.CmdFlush, wire.CmdQueryDirectory, wire.CmdQueryInfo, wire.CmdSetInfo:
+	case wire.CmdClose, wire.CmdFlush, wire.CmdQueryDirectory, wire.CmdLock, wire.CmdIoctl:
 		return 64 + 8
-	case wire.CmdRead, wire.CmdWrite, wire.CmdLock, wire.CmdIoctl:
+	case wire.CmdRead, wire.CmdWrite, wire.CmdSetInfo:
 		return 64 + 16
+	case wire.CmdQueryInfo:
+		return 64 + 24
 	default:
 		return -1
 	}
