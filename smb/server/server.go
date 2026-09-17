@@ -186,6 +186,9 @@ type openHandle struct {
 	deletePending bool
 	enumDone      bool
 	enumMu        sync.Mutex
+	enumEntries   []vfs.FileInfo
+	enumCursor    int
+	enumPattern   string
 }
 
 type conn struct {

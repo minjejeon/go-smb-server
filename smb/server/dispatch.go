@@ -454,11 +454,15 @@ func (c *conn) handleQueryDirectory(ctx context.Context, msg []byte, tr *tree) u
 		return c.errBody(wire.StatusInvalidHandle)
 	}
 
-	if req.Flags&(wire.QueryDirRestartScans|wire.QueryDirReopen) != 0 {
-		oh.enumDone = false
-	}
 	oh.enumMu.Lock()
 	defer oh.enumMu.Unlock()
+
+	if req.Flags&(wire.QueryDirRestartScans|wire.QueryDirReopen) != 0 {
+		oh.enumDone = false
+		oh.enumCursor = 0
+		oh.enumEntries = nil
+	}
+
 	if oh.enumDone {
 		return c.errBody(wire.StatusNoMoreFiles)
 	}
@@ -466,6 +470,23 @@ func (c *conn) handleQueryDirectory(ctx context.Context, msg []byte, tr *tree) u
 	pattern := wire.UTF16FromBytes(req.FileName)
 	if pattern == "" {
 		pattern = "*"
+	}
+
+	if oh.enumEntries == nil || oh.enumPattern != pattern {
+		oh.enumPattern = pattern
+		oh.enumEntries = nil
+		oh.enumCursor = 0
+		for fi, err := range oh.h.Enumerate(ctx, pattern) {
+			if err != nil {
+				return c.errBody(osErrToStatus(err))
+			}
+			oh.enumEntries = append(oh.enumEntries, fi)
+		}
+	}
+
+	if oh.enumCursor >= len(oh.enumEntries) {
+		oh.enumDone = true
+		return c.errBody(wire.StatusNoMoreFiles)
 	}
 
 	useFileIdBothDir := req.FileInformationClass == wire.FileIdBothDirectoryInformation
@@ -483,15 +504,10 @@ func (c *conn) handleQueryDirectory(ctx context.Context, msg []byte, tr *tree) u
 
 	var prevEntryStart = -1
 	empty := true
-	for fi, err := range oh.h.Enumerate(ctx, pattern) {
-		if err != nil {
-			if empty {
-				c.out = c.out[:bodyStart]
-				return c.errBody(osErrToStatus(err))
-			}
-			break
-		}
-		if len(c.out)-bufStart+entryMinSize+len(fi.Name)*2 > int(req.OutputBufferLength) {
+	for oh.enumCursor < len(oh.enumEntries) {
+		fi := oh.enumEntries[oh.enumCursor]
+		entrySize := entryMinSize + len(fi.Name)*2
+		if !empty && len(c.out)-bufStart+entrySize > int(req.OutputBufferLength) {
 			break
 		}
 		encFi := wire.FileInfo{
@@ -511,10 +527,12 @@ func (c *conn) handleQueryDirectory(ctx context.Context, msg []byte, tr *tree) u
 		}
 		prevEntryStart = entryStart
 		empty = false
+		oh.enumCursor++
 	}
 
 	if empty {
 		c.out = c.out[:bodyStart]
+		oh.enumDone = true
 		return c.errBody(wire.StatusNoMoreFiles)
 	}
 
@@ -522,7 +540,9 @@ func (c *conn) handleQueryDirectory(ctx context.Context, msg []byte, tr *tree) u
 	binary.LittleEndian.PutUint16(c.out[bodyStart:bodyStart+2], 9)
 	binary.LittleEndian.PutUint16(c.out[bodyStart+2:bodyStart+4], uint16(bufStart))
 	binary.LittleEndian.PutUint32(c.out[bodyStart+4:bodyStart+8], uint32(bufLen))
-	oh.enumDone = true
+	if oh.enumCursor >= len(oh.enumEntries) {
+		oh.enumDone = true
+	}
 	return wire.StatusSuccess
 }
 
