@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -112,25 +113,62 @@ func NewLocalBackend(root string) (*LocalBackend, error) {
 	return &LocalBackend{Root: abs}, nil
 }
 
-func (b *LocalBackend) fullPath(p string) string {
+func cleanPath(p string) string {
+	// Normalize backslashes (Windows client) to forward slashes
+	p = strings.ReplaceAll(p, "\\", "/")
 	clean := path.Clean("/" + p)
 	if clean == "/" {
-		clean = ""
+		return ""
 	}
-	return filepath.Join(b.Root, filepath.FromSlash(clean))
+	return strings.TrimPrefix(clean, "/")
+}
+
+func (b *LocalBackend) fullPath(p string) (string, error) {
+	clean := cleanPath(p)
+	full := filepath.Join(b.Root, filepath.FromSlash(clean))
+
+	// Boundary check: ensure target does not escape the share root
+	rel, err := filepath.Rel(b.Root, full)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", os.ErrPermission
+	}
+
+	// For existing symlinks, evaluate target destination to prevent symlink traversal outside root
+	if fi, err := os.Lstat(full); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		eval, err := filepath.EvalSymlinks(full)
+		if err == nil {
+			relEval, err := filepath.Rel(b.Root, eval)
+			if err != nil || relEval == ".." || strings.HasPrefix(relEval, ".."+string(filepath.Separator)) {
+				return "", os.ErrPermission
+			}
+		}
+	}
+
+	return full, nil
 }
 
 func (b *LocalBackend) Remove(_ context.Context, p string) error {
-	return os.RemoveAll(b.fullPath(p))
+	full, err := b.fullPath(p)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(full)
 }
 
 func (b *LocalBackend) Mkdir(_ context.Context, p string) error {
-	return os.MkdirAll(b.fullPath(p), 0o755)
+	full, err := b.fullPath(p)
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(full, 0o755)
 }
 
 func (b *LocalBackend) CopyChunk(_ context.Context, srcPath string, srcOffset, dstOffset, length int64) error {
-	srcFull := b.fullPath(srcPath)
-	dstFull := b.fullPath(srcPath)
+	srcFull, err := b.fullPath(srcPath)
+	if err != nil {
+		return err
+	}
+	dstFull := srcFull
 	src, err := os.Open(srcFull)
 	if err != nil {
 		return err
@@ -169,7 +207,10 @@ func (b *LocalBackend) CopyChunk(_ context.Context, srcPath string, srcOffset, d
 }
 
 func (b *LocalBackend) Open(_ context.Context, opts OpenOptions) (Handle, error) {
-	full := b.fullPath(opts.Path)
+	full, err := b.fullPath(opts.Path)
+	if err != nil {
+		return nil, err
+	}
 	if full == b.Root {
 		full = filepath.Join(b.Root, ".")
 	}
