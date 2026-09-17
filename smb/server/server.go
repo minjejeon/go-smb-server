@@ -321,11 +321,9 @@ func (c *conn) handleMessage(ctx context.Context, msg []byte) {
 			c.log.Debug("bad header in compound", "err", err)
 			return
 		}
-		related := hdr.Flags&wire.FlagRelatedOps != 0 && !first
-		if related {
-			if fo := fileIdOffset(hdr.Command); fo >= 0 && fo+16 <= len(sub) {
-				copy(sub[fo:fo+16], lastFileId[:])
-			}
+		cmdBytes := sub
+		if hdr.NextCommand != 0 && int(hdr.NextCommand) <= len(sub) {
+			cmdBytes = sub[:hdr.NextCommand]
 		}
 
 		charge := uint32(hdr.CreditCharge)
@@ -337,7 +335,7 @@ func (c *conn) handleMessage(ctx context.Context, msg []byte) {
 
 		if sess := c.getSession(hdr.SessionId); sess != nil && sess.signer != nil {
 			if hdr.Flags&wire.FlagSigned != 0 {
-				ok, vErr := sess.signer.Verify(sub)
+				ok, vErr := sess.signer.Verify(cmdBytes)
 				if vErr != nil || !ok {
 					chainFailed = true
 					lastStatus = wire.StatusAccessDenied
@@ -345,6 +343,13 @@ func (c *conn) handleMessage(ctx context.Context, msg []byte) {
 			} else if sess.requireSign {
 				chainFailed = true
 				lastStatus = wire.StatusAccessDenied
+			}
+		}
+
+		related := hdr.Flags&wire.FlagRelatedOps != 0 && !first
+		if related {
+			if fo := fileIdOffset(hdr.Command); fo >= 0 && fo+16 <= len(sub) {
+				copy(sub[fo:fo+16], lastFileId[:])
 			}
 		}
 
