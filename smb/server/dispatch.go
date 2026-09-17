@@ -228,11 +228,15 @@ func (c *conn) handleTreeConnect(msg []byte, hdr *wire.Header, sess *session) ui
 	}
 	hdr.TreeId = treeID
 
+	maxAccess := uint32(0x001f01ff)
+	if sh.IsReadOnly() {
+		maxAccess = 0x00120089
+	}
 	resp := wire.TreeConnectResponse{
 		ShareType:     wire.ShareTypeDisk,
 		ShareFlags:    0x00000030,
 		Capabilities:  0,
-		MaximalAccess: 0x001f01ff,
+		MaximalAccess: maxAccess,
 	}
 	c.out = resp.Append(c.out)
 	return wire.StatusSuccess
@@ -276,6 +280,14 @@ func (c *conn) handleCreate(ctx context.Context, msg []byte, hdr *wire.Header, t
 		Path:        name,
 		Disposition: req.CreateDisposition,
 		CreateDir:   req.CreateOptions&wire.FileDirectoryFile != 0,
+	}
+	if tr.share.IsReadOnly() {
+		if req.CreateDisposition == wire.FileCreate || req.CreateDisposition == wire.FileSupersede ||
+			req.CreateDisposition == wire.FileOverwrite || req.CreateDisposition == wire.FileOverwriteIf ||
+			req.CreateOptions&wire.FileDeleteOnClose != 0 ||
+			opts.CreateDir {
+			return c.errBody(wire.StatusAccessDenied)
+		}
 	}
 	h, err := tr.share.Backend().Open(ctx, opts)
 	if err != nil {
@@ -358,6 +370,9 @@ func (c *conn) handleClose(ctx context.Context, msg []byte, tr *tree) uint32 {
 	}
 
 	if oh.deletePending {
+		if tr.share.IsReadOnly() {
+			return c.errBody(wire.StatusAccessDenied)
+		}
 		if rm, ok := tr.share.Backend().(vfs.Remover); ok {
 			if rmErr := rm.Remove(ctx, oh.path); rmErr != nil {
 				return c.errBody(osErrToStatus(rmErr))
@@ -407,6 +422,9 @@ func (c *conn) handleWrite(ctx context.Context, msg []byte, tr *tree) uint32 {
 	var req wire.WriteRequest
 	if err := req.Parse(msg); err != nil {
 		return c.errBody(wire.StatusInvalidParameter)
+	}
+	if tr.share.IsReadOnly() {
+		return c.errBody(wire.StatusAccessDenied)
 	}
 	oh, ok := tr.opens[req.FileId]
 	if !ok {

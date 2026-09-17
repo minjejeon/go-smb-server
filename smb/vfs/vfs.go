@@ -15,19 +15,26 @@ import (
 type Share interface {
 	Name() string
 	Backend() Backend
+	IsReadOnly() bool
 }
 
 type DiskShare struct {
-	name    string
-	backend Backend
+	name     string
+	backend  Backend
+	readOnly bool
 }
 
 func NewDiskShare(name string, backend Backend) DiskShare {
 	return DiskShare{name: name, backend: backend}
 }
 
+func NewReadOnlyDiskShare(name string, backend Backend) DiskShare {
+	return DiskShare{name: name, backend: backend, readOnly: true}
+}
+
 func (s DiskShare) Name() string     { return s.name }
 func (s DiskShare) Backend() Backend { return s.backend }
+func (s DiskShare) IsReadOnly() bool { return s.readOnly }
 
 const (
 	DispositionSupersede   uint32 = 0x00000000

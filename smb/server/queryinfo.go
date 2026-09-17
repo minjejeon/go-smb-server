@@ -128,6 +128,10 @@ func (c *conn) handleSetInfo(ctx context.Context, msg []byte, tr *tree) uint32 {
 		return c.errBody(wire.StatusInvalidHandle)
 	}
 
+	if tr.share.IsReadOnly() {
+		return c.errBody(wire.StatusAccessDenied)
+	}
+
 	if req.InfoType == wire.InfoFile {
 		switch req.FileInfoClass {
 		case wire.FileDispositionInformation:
