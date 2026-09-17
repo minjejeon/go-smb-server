@@ -399,6 +399,9 @@ func (c *conn) handleRead(ctx context.Context, msg []byte, tr *tree) uint32 {
 	if err := req.Parse(msg); err != nil {
 		return c.errBody(wire.StatusInvalidParameter)
 	}
+	if req.Length > c.srv.maxRead || int64(req.Offset) < 0 {
+		return c.errBody(wire.StatusInvalidParameter)
+	}
 	oh, ok := tr.opens[req.FileId]
 	if !ok {
 		return c.errBody(wire.StatusInvalidHandle)
@@ -421,6 +424,9 @@ func (c *conn) handleRead(ctx context.Context, msg []byte, tr *tree) uint32 {
 func (c *conn) handleWrite(ctx context.Context, msg []byte, tr *tree) uint32 {
 	var req wire.WriteRequest
 	if err := req.Parse(msg); err != nil {
+		return c.errBody(wire.StatusInvalidParameter)
+	}
+	if req.Length > c.srv.maxWrite || uint32(len(req.Data)) > c.srv.maxWrite || int64(req.Offset) < 0 {
 		return c.errBody(wire.StatusInvalidParameter)
 	}
 	if tr.share.IsReadOnly() {

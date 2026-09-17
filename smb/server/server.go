@@ -208,7 +208,12 @@ type conn struct {
 }
 
 func (s *Server) serveConn(ctx context.Context, c net.Conn) {
-	defer func() { _ = c.Close() }()
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("recovered from panic in serveConn", "err", r)
+		}
+		_ = c.Close()
+	}()
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
